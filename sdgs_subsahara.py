@@ -1,78 +1,47 @@
 
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import japanize_matplotlib
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
-
-def get_distinct_colors(n):
-    """
-    異なる色を生成する関数
-    
-    Args:
-        n (int): 必要な色の数
-    
-    Returns:
-        list: 異なる色のリスト
-    """
-    # Color Brewerのカラーパレット（質的カラーパレット）
-    color_palette = [
-        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
-        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-        '#1a55FF', '#FF6B6B', '#4ECDC4', '#45B7D1', '#FDCB6E',
-        '#6C5CE7', '#FF8A5B', '#2ECC71', '#3498DB', '#E74C3C'
-    ]
-    
-    # 必要な色の数が既存のパレットを超える場合は、追加の色を生成
-    if n > len(color_palette):
-        # matplotlib の色マップから追加の色を取得
-        additional_colors = plt.cm.Set3(np.linspace(0, 1, n - len(color_palette)))
-        color_palette.extend([mcolors.rgb2hex(color) for color in additional_colors])
-    
-    return color_palette[:n]
+import matplotlib.font_manager as fm
 
 def process_sdg_data():
     # ファイルパス
-    input_file = 'SDR2024-data.xlsx'
+    input_file = 'Sub_Saharan_African_Countries_SDG.xlsx'
     output_file = 'sdgs_subsahara_graph.xlsx'
     
     try:
         # データの読み込み
-        raw_data_panel = pd.read_excel(input_file, sheet_name='Raw Data - Panel')
-        backdated_sdg = pd.read_excel(input_file, sheet_name='Backdated SDG Index')
+        df = pd.read_excel(input_file)
         
-        # 'Country' と 'indexreg' の対応をマッピング
-        country_to_indexreg = raw_data_panel.set_index('Country')['indexreg'].to_dict()
+        # カラム名を小文字に変換し、余分なスペースを削除
+        df.columns = [col.strip().lower() for col in df.columns]
         
-        # 'Backdated SDG Index' シートに 'indexreg' 列を追加
-        backdated_sdg['indexreg'] = backdated_sdg['Country'].map(country_to_indexreg)
+        # 必要なカラムの確認
+        required_columns = ['year'] + [f'goal{i}' for i in range(1, 18)]
+        for col in required_columns:
+            if col not in df.columns:
+                print(f"エラー: '{col}' カラムが存在しません。")
+                return
         
-        # 年次とindexregごとの平均を計算
+        # 年次ごとの平均を格納するリスト
         years = list(range(2000, 2024))
-        indexregs = backdated_sdg['indexreg'].dropna().unique()
         goals = [f'goal{i}' for i in range(1, 18)]
-        
-        averages_dict = {'year': []}
-        for indexreg in indexregs:
-            averages_dict[indexreg] = []
+        averages_dict = { 'year': [] }
+        for goal in goals:
+            averages_dict[goal] = []
         
         for year in years:
-            yearly_data = backdated_sdg[backdated_sdg['year'] == year]
+            yearly_data = df[df['year'] == year]
+            if yearly_data.empty:
+                print(f"警告: {year} 年のデータが存在しません。")
+                continue
             averages_dict['year'].append(year)
-            for indexreg in indexregs:
-                reg_data = yearly_data[yearly_data['indexreg'] == indexreg]
-                if reg_data.empty:
-                    averages_dict[indexreg].append(None)
-                    continue
-                # goal1 ~ goal17 の平均を計算（0とNaNを除外）
-                goal_means = []
-                for goal in goals:
-                    valid_data = reg_data[goal].replace(0, pd.NA).dropna()
-                    if not valid_data.empty:
-                        goal_means.append(valid_data.mean())
-                average = sum(goal_means) / len(goal_means) if goal_means else None
-                averages_dict[indexreg].append(average)
+            for goal in goals:
+                # 空セルや0を除外
+                valid_data = yearly_data[goal].replace(0, pd.NA).dropna()
+                average = valid_data.mean()
+                averages_dict[goal].append(average)
         
         # 平均値のデータフレーム作成
         averages_df = pd.DataFrame(averages_dict)
@@ -81,36 +50,25 @@ def process_sdg_data():
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
             averages_df.to_excel(writer, sheet_name='平均値', index=False)
         
+        # フォントを設定
+        font_prop = fm.FontProperties(fname='/mnt/data/file-ngwyeoEN29l1M3O1QpdxCwkj')
+        
         # グラフの作成
-        plt.figure(figsize=(16, 10))
+        plt.figure(figsize=(14, 8))
+        colors = plt.cm.viridis(range(len(goals)))  # Use a colormap to generate distinct colors
+        for i, goal in enumerate(goals):
+            plt.plot(averages_df['year'], averages_df[goal], marker='o', label=goal.capitalize(), color=colors[i])
         
-        # 異なる色とスタイルの生成
-        colors = get_distinct_colors(len(indexregs))
-        line_styles = ['-', '--', '-.', ':', '-', '--', '-.', ':']
-        markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'h']
-        
-        for i, indexreg in enumerate(indexregs):
-            plt.plot(
-                averages_df['year'], 
-                averages_df[indexreg], 
-                color=colors[i], 
-                linestyle=line_styles[i % len(line_styles)],
-                marker=markers[i % len(markers)],
-                linewidth=2.5,
-                markersize=8,
-                label=indexreg
-            )
-        
-        plt.title('各Indexregの年次SDG Index Scoreの平均値 (2000-2023)', fontsize=16)
-        plt.xlabel('年', fontsize=14)
-        plt.ylabel('SDG Index Scoreの平均値', fontsize=14)
+        plt.title('Sub-Saharan Africaの各ゴールの年次平均値 (2000-2023)', fontsize=16, fontproperties=font_prop)
+        plt.xlabel('年', fontsize=14, fontproperties=font_prop)
+        plt.ylabel('平均スコア', fontsize=14, fontproperties=font_prop)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
         
         # グラフを画像として保存
         graph_image = 'sdg_averages_graph.png'
-        plt.savefig(graph_image, dpi=300, bbox_inches='tight')
+        plt.savefig(graph_image, dpi=300)
         plt.close()
         
         # Excelファイルにグラフを挿入
@@ -131,4 +89,3 @@ def process_sdg_data():
 
 if __name__ == "__main__":
     process_sdg_data()
-
